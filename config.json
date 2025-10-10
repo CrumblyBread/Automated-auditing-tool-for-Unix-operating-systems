@@ -1,0 +1,23 @@
+{
+  "tests_directory": "tests",
+  "save_results": true,
+  "output_file": "enumeration_results.json",
+  "tests": [
+    {
+      "name": "System Information",
+      "file": "example_test.py",
+      "enabled": true,
+      "description": "Gathers basic system information",
+      "parameters": {
+        "verbose": true
+      }
+    },
+    {
+      "name": "Another Test",
+      "file": "another_test.py",
+      "enabled": false,
+      "description": "Example of a disabled test",
+      "parameters": {}
+    }
+  ]
+}
