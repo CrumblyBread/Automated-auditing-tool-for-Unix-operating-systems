@@ -5,7 +5,7 @@
   "tests": [
     {
       "name": "System Information",
-      "file": "example_test.py",
+      "file": "example.py",
       "enabled": true,
       "description": "Gathers basic system information",
       "parameters": {
@@ -13,11 +13,58 @@
       }
     },
     {
-      "name": "Another Test",
-      "file": "another_test.py",
-      "enabled": false,
-      "description": "Example of a disabled test",
-      "parameters": {}
+      "name": "Kernel Version Check",
+      "file": "kernelCheck.py",
+      "enabled": true,
+      "description": "Overenie verzie jadra systému",
+      "parameters": {
+        "min_kernel_version": "5.4.0"
+      }
+    },
+    {
+      "name": "Firewall Status Check",
+      "file": "firewallCheck.py",
+      "enabled": true,
+      "description": "Kontrola stavu firewallu (ufw)",
+      "parameters": {
+        "require_active": true,
+        "check_rules": true
+      }
+    },
+    {
+      "name": "Security Updates Check",
+      "file": "securityUpdatesCheck.py",
+      "enabled": true,
+      "description": "Overenie existencie bezpečnostných aktualizácií",
+      "parameters": {
+        "max_updates_warning": 10,
+        "max_updates_critical": 50,
+        "check_security_only": false
+      }
+    },
+    {
+      "name": "Home Directory Permissions Check",
+      "file": "permissionsCheck.py",
+      "enabled": true,
+      "description": "Kontrola prístupových práv v domovských adresároch",
+      "parameters": {
+        "home_directory": "/home",
+        "check_world_readable": true,
+        "check_world_writable": true,
+        "check_group_writable": true,
+        "max_permissions": "755"
+      }
+    },
+    {
+      "name": "MAC System Check",
+      "file": "macSystemcheck.py",
+      "enabled": true,
+      "description": "Overenie stavu SELinux/AppArmor",
+      "parameters": {
+        "preferred_mac": "apparmor",
+        "require_active": true,
+        "check_profiles": true
+      }
     }
   ]
 }

@@ -17,13 +17,13 @@ class EnumerationFramework:
         try:
             with open(self.config_path, 'r') as f:
                 self.config = json.load(f)
-            print(f"[+] Configuration loaded from {self.config_path}")
+            print(f"Configuration loaded from {self.config_path}")
             return True
         except FileNotFoundError:
-            print(f"[!] Configuration file not found: {self.config_path}")
+            print(f"Configuration file not found: {self.config_path}")
             return False
         except json.JSONDecodeError as e:
-            print(f"[!] Error parsing configuration file: {e}")
+            print(f"Error parsing configuration file: {e}")
             return False
     
     def load_test_module(self, test_path):
@@ -34,26 +34,26 @@ class EnumerationFramework:
             spec.loader.exec_module(module)
             return module
         except Exception as e:
-            print(f"[!] Error loading test module {test_path}: {e}")
+            print(f"Error loading test module {test_path}: {e}")
             return None
     
     def discover_tests(self):
         if 'tests' not in self.config:
-            print("[!] No tests defined in configuration")
+            print("No tests defined in configuration")
             return False
         
         tests_dir = self.config.get('tests_directory', 'tests')
         
         for test_config in self.config['tests']:
             if not test_config.get('enabled', False):
-                print(f"[-] Skipping disabled test: {test_config['name']}")
+                print(f"Skipping disabled test: {test_config['name']}")
                 continue
             
             test_file = test_config['file']
             test_path = os.path.join(tests_dir, test_file)
             
             if not os.path.exists(test_path):
-                print(f"[!] Test file not found: {test_path}")
+                print(f"Test file not found: {test_path}")
                 continue
             
             module = self.load_test_module(test_path)
@@ -62,9 +62,9 @@ class EnumerationFramework:
                     'module': module,
                     'config': test_config
                 }
-                print(f"[+] Loaded test: {test_config['name']}")
+                print(f"Loaded test: {test_config['name']}")
             else:
-                print(f"[!] Test module {test_file} missing 'run' function")
+                print(f"Test module {test_file} missing 'run' function")
         
         return len(self.tests) > 0
     
@@ -87,7 +87,7 @@ class EnumerationFramework:
             }
             
         except Exception as e:
-            print(f"[!] Error executing test {test_name}: {e}")
+            print(f"Error executing test {test_name}: {e}")
             self.results[test_name] = {
                 'status': 'error',
                 'error': str(e),
@@ -96,10 +96,10 @@ class EnumerationFramework:
     
     def run_all_tests(self):
         if not self.tests:
-            print("[!] No tests loaded to execute")
+            print("No tests loaded to execute")
             return
         
-        print(f"\n[+] Starting enumeration with {len(self.tests)} test(s)")
+        print(f"\nStarting enumeration with {len(self.tests)} test(s)")
         
         for test_name, test_info in self.tests.items():
             self.run_test(test_name, test_info)
