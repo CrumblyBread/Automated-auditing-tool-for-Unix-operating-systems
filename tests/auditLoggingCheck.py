@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+import os
+import subprocess
+
+def run(params=None):
+    if params is None:
+        params = {}
+
+    require_auditd = params.get('require_auditd', True)
+    check_log_rotation = params.get('check_log_rotation', True)
+    check_syslog = params.get('check_syslog', True)
+    findings = []
+    status = 'pass'
+
+    # Check auditd
+    auditd_active = False
+    try:
+        result = subprocess.run(['systemctl', 'is-active', 'auditd'], capture_output=True, text=True)
+        if result.stdout.strip() == 'active':
+            findings.append("PASS: auditd is active")
+            auditd_active = True
+        else:
+            findings.append(f"WARN: auditd is not active (status: {result.stdout.strip()})")
+            if require_auditd:
+                status = 'fail'
+            elif status == 'pass':
+                status = 'warn'
+    except FileNotFoundError:
+        findings.append("INFO: systemctl not found, trying service command")
+        try:
+            result = subprocess.run(['service', 'auditd', 'status'], capture_output=True, text=True)
+            if 'running' in result.stdout.lower():
+                findings.append("PASS: auditd is running")
+                auditd_active = True
+            else:
+                findings.append("WARN: auditd does not appear to be running")
+                if require_auditd and status == 'pass':
+                    status = 'warn'
+        except Exception:
+            findings.append("WARN: Cannot determine auditd status")
+
+    # Check auditd rules
+    if auditd_active:
+        try:
+            result = subprocess.run(['auditctl', '-l'], capture_output=True, text=True)
+            rules = [l for l in result.stdout.splitlines() if l.strip() and 'No rules' not in l]
+            if rules:
+                findings.append(f"PASS: {len(rules)} audit rule(s) configured")
+            else:
+                findings.append("WARN: auditd is running but no rules configured")
+                if status == 'pass':
+                    status = 'warn'
+
+            # Check for important audit rules
+            important_rules = ['-w /etc/passwd', '-w /etc/shadow', '-w /etc/sudoers', '-w /var/log/auth.log']
+            combined_rules = '\n'.join(result.stdout.splitlines())
+            for rule in important_rules:
+                if rule in combined_rules:
+                    findings.append(f"PASS: Audit rule present: {rule}")
+                else:
+                    findings.append(f"INFO: Audit rule not found: {rule}")
+        except FileNotFoundError:
+            findings.append("INFO: auditctl not available")
+
+    # Check syslog/rsyslog/journald
+    if check_syslog:
+        syslog_services = ['rsyslog', 'syslog', 'systemd-journald', 'syslog-ng']
+        found_logger = False
+        for svc in syslog_services:
+            try:
+                result = subprocess.run(['systemctl', 'is-active', svc], capture_output=True, text=True)
+                if result.stdout.strip() == 'active':
+                    findings.append(f"PASS: {svc} is active")
+                    found_logger = True
+            except Exception:
+                pass
+        if not found_logger:
+            findings.append("WARN: No syslog service detected (rsyslog, syslog-ng, journald)")
+            if status == 'pass':
+                status = 'warn'
+
+    # Check log file existence
+    log_files = ['/var/log/auth.log', '/var/log/syslog', '/var/log/messages', '/var/log/kern.log']
+    for lf in log_files:
+        if os.path.isfile(lf):
+            try:
+                size = os.path.getsize(lf)
+                findings.append(f"INFO: Log file present: {lf} ({size} bytes)")
+            except Exception:
+                findings.append(f"INFO: Log file present: {lf}")
+
+    # Check log rotation
+    if check_log_rotation:
+        logrotate_conf = '/etc/logrotate.conf'
+        logrotate_d = '/etc/logrotate.d'
+        if os.path.isfile(logrotate_conf):
+            findings.append("PASS: logrotate.conf present")
+        else:
+            findings.append("WARN: /etc/logrotate.conf not found")
+            if status == 'pass':
+                status = 'warn'
+        if os.path.isdir(logrotate_d):
+            count = len(os.listdir(logrotate_d))
+            findings.append(f"INFO: {count} logrotate.d config(s) found")
+
+    return {'test_name': 'Audit Logging Configuration', 'status': status, 'findings': findings}
+
+
+if __name__ == "__main__":
+    print(run())

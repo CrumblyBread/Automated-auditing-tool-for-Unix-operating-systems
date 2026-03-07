@@ -65,6 +65,226 @@
         "require_active": true,
         "check_profiles": true
       }
+    },
+    {
+      "name": "Password Policy Check",
+      "file": "passwordPolicyCheck.py",
+      "enabled": true,
+      "description": "Checks /etc/login.defs and PAM for password length, expiry and complexity rules",
+      "parameters": {
+        "min_password_length": 12,
+        "check_complexity": true,
+        "check_expiry": true,
+        "max_password_age_days": 90
+      }
+    },
+    {
+      "name": "SSH Configuration Check",
+      "file": "sshConfigCheck.py",
+      "enabled": true,
+      "description": "Audits sshd_config for insecure settings (root login, password auth, X11, etc.)",
+      "parameters": {
+        "sshd_config": "/etc/ssh/sshd_config",
+        "allow_root_login": false,
+        "allow_password_auth": false,
+        "require_protocol2": true,
+        "max_auth_tries": 4
+      }
+    },
+    {
+      "name": "Open Ports Check",
+      "file": "openPortsCheck.py",
+      "enabled": true,
+      "description": "Lists all listening ports and flags unexpected or sensitive services",
+      "parameters": {
+        "allowed_ports": [
+          22,
+          80,
+          443
+        ],
+        "warn_on_unexpected": true,
+        "check_udp": false
+      }
+    },
+    {
+      "name": "SUID/SGID Files Check",
+      "file": "suidCheck.py",
+      "enabled": true,
+      "description": "Scans for SUID/SGID binaries and flags unknown ones against a whitelist",
+      "parameters": {
+        "scan_paths": [
+          "/usr",
+          "/bin",
+          "/sbin"
+        ],
+        "known_suid_whitelist": [
+          "/usr/bin/sudo",
+          "/usr/bin/su",
+          "/usr/bin/passwd",
+          "/usr/bin/gpasswd",
+          "/usr/bin/chfn",
+          "/usr/bin/chsh",
+          "/usr/bin/newgrp",
+          "/usr/bin/pkexec",
+          "/usr/bin/mount",
+          "/usr/bin/umount",
+          "/bin/mount",
+          "/bin/umount",
+          "/bin/su",
+          "/bin/ping",
+          "/usr/bin/ping",
+          "/usr/sbin/pppd",
+          "/usr/lib/openssh/ssh-keysign",
+          "/usr/lib/dbus-1.0/dbus-daemon-launch-helper"
+        ]
+      }
+    },
+    {
+      "name": "User Accounts Audit",
+      "file": "userAccountsCheck.py",
+      "enabled": true,
+      "description": "Audits user accounts: UID 0, empty passwords, service account shells, sudo/NOPASSWD, duplicate UIDs",
+      "parameters": {
+        "check_uid0_users": true,
+        "check_no_password": true,
+        "check_login_shell": true,
+        "allowed_uid0_users": [
+          "root"
+        ],
+        "check_sudoers": true
+      }
+    },
+    {
+      "name": "Cron Jobs Audit",
+      "file": "cronAuditCheck.py",
+      "enabled": true,
+      "description": "Audits cron jobs for dangerous permissions, unowned files and suspicious commands",
+      "parameters": {
+        "check_world_writable": true,
+        "check_unowned": true,
+        "check_root_cron": true
+      }
+    },
+    {
+      "name": "Filesystem Security Check",
+      "file": "filesystemCheck.py",
+      "enabled": true,
+      "description": "Verifies mount options for /tmp, /home and removable media (noexec, nosuid, nodev)",
+      "parameters": {
+        "require_noexec_tmp": true,
+        "require_nosuid_removable": true,
+        "check_world_writable_mounts": true
+      }
+    },
+    {
+      "name": "Sysctl Security Parameters Check",
+      "file": "sysctlCheck.py",
+      "enabled": true,
+      "description": "Checks kernel hardening sysctl parameters (ASLR, SYN cookies, IP forwarding, ICMP, etc.)",
+      "parameters": {
+        "strict_mode": false
+      }
+    },
+    {
+      "name": "Running Services Audit",
+      "file": "servicesAuditCheck.py",
+      "enabled": true,
+      "description": "Enumerates running services and flags unnecessary or dangerous ones (telnet, FTP, rsh, etc.)",
+      "parameters": {
+        "check_unnecessary_services": true,
+        "unnecessary_services": [
+          "telnet",
+          "rsh",
+          "rlogin",
+          "rexec",
+          "finger",
+          "talk",
+          "ntalk",
+          "chargen",
+          "daytime",
+          "discard",
+          "echo",
+          "time",
+          "avahi-daemon",
+          "cups",
+          "isc-dhcp-server",
+          "slapd",
+          "nfs-server",
+          "nis",
+          "rpcbind",
+          "snmpd",
+          "vsftpd",
+          "proftpd",
+          "pure-ftpd",
+          "xinetd"
+        ]
+      }
+    },
+    {
+      "name": "Audit Logging Configuration",
+      "file": "auditLoggingCheck.py",
+      "enabled": true,
+      "description": "Checks auditd, syslog and log rotation are active with sensible rules",
+      "parameters": {
+        "require_auditd": true,
+        "check_log_rotation": true,
+        "check_syslog": true
+      }
+    },
+    {
+      "name": "World-Writable Files Check",
+      "file": "worldWritableCheck.py",
+      "enabled": true,
+      "description": "Scans system directories for world-writable files",
+      "parameters": {
+        "scan_paths": [
+          "/etc",
+          "/usr",
+          "/bin",
+          "/sbin"
+        ],
+        "exclude_paths": [
+          "/proc",
+          "/sys",
+          "/dev"
+        ],
+        "max_findings": 50
+      }
+    },
+    {
+      "name": "Disk Encryption Check",
+      "file": "diskEncryptionCheck.py",
+      "enabled": true,
+      "description": "Detects LUKS, dm-crypt and ecryptfs disk/home encryption and checks swap",
+      "parameters": {
+        "require_root_encrypted": false,
+        "check_swap_encrypted": true
+      }
+    },
+    {
+      "name": "Installed Packages Check",
+      "file": "packagesCheck.py",
+      "enabled": true,
+      "description": "Audits installed packages for dangerous/legacy software and optionally runs debsecan",
+      "parameters": {
+        "check_known_vulnerable_packages": true,
+        "vulnerable_packages": [
+          "telnet",
+          "rsh-client",
+          "rsh-server",
+          "talk",
+          "ntalk",
+          "xinetd",
+          "inetd",
+          "nis",
+          "yp-tools",
+          "tftp",
+          "atftpd",
+          "tftpd",
+          "tftpd-hpa",
+          "rpcbind"
+        ]
+      }
     }
   ]
 }
