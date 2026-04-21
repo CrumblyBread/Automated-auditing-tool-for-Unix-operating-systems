@@ -26,7 +26,7 @@ def run(params=None):
             for fname in os.listdir(d):
                 all_cron_files.append(os.path.join(d, fname))
 
-    print(f"[*] Scanning {len(all_cron_files)} cron file(s)")
+    print(f"[*] Skenujem {len(all_cron_files)} cron súbor(ov)")
 
     for cf in all_cron_files:
         if not os.path.isfile(cf):

@@ -6,14 +6,14 @@ def run(params=None):
     
     verbose = params.get('verbose', False)
     
-    print("Starting example test...")
+    print("Spúšťam ukážkový test...")
     
     if verbose:
-        print("Verbose mode enabled")
-        print("Collecting information...")
+        print("Verbose režim je zapnutý")
+        print("Zbieram informácie...")
     
-    print("Example test executed successfully!")
-    print("Enumerating data...")
+    print("Ukážkový test prebehol úspešne!")
+    print("Enumerujem dáta...")
     print("Beep Boop...")
     
     results = {
@@ -30,6 +30,6 @@ def run(params=None):
     return results
 
 if __name__ == "__main__":
-    print("Testing module independently...")
+    print("Testujem modul samostatne...")
     result = run({'verbose': True})
-    print(f"\nResult: {result}")
+    print(f"\nVýsledok: {result}")

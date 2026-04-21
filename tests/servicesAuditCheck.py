@@ -28,7 +28,7 @@ def run(params=None):
                 svc = parts[0].replace('.service', '')
                 running_services.append(svc)
 
-        print(f"[*] Found {len(running_services)} running services")
+        print(f"[*] Našiel som {len(running_services)} bežiacich služieb")
         findings.append(f"INFO: {len(running_services)} services currently running")
 
     except FileNotFoundError:

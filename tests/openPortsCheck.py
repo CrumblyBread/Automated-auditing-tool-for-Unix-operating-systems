@@ -40,7 +40,7 @@ def run(params=None):
             result_udp = subprocess.run(['ss', '-ulnp'], capture_output=True, text=True)
             open_ports += parse_listeners(result_udp.stdout, 'UDP')
 
-        print(f"[*] Found {len(open_ports)} listening port(s)")
+        print(f"[*] Našiel som {len(open_ports)} port(ov) v režime LISTEN")
 
     except FileNotFoundError:
         try:

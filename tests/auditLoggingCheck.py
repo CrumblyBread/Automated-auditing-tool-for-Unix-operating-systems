@@ -12,34 +12,32 @@ def run(params=None):
     findings = []
     status = 'pass'
 
-    # Check auditd
     auditd_active = False
     try:
         result = subprocess.run(['systemctl', 'is-active', 'auditd'], capture_output=True, text=True)
         if result.stdout.strip() == 'active':
-            findings.append("PASS: auditd is active")
+            findings.append("PASS: auditd je aktívny")
             auditd_active = True
         else:
-            findings.append(f"WARN: auditd is not active (status: {result.stdout.strip()})")
+            findings.append(f"WARN: auditd nie je aktívny (status: {result.stdout.strip()})")
             if require_auditd:
                 status = 'fail'
             elif status == 'pass':
                 status = 'warn'
     except FileNotFoundError:
-        findings.append("INFO: systemctl not found, trying service command")
+        findings.append("INFO: systemctl nenájdený, skúšam príkaz service")
         try:
             result = subprocess.run(['service', 'auditd', 'status'], capture_output=True, text=True)
             if 'running' in result.stdout.lower():
-                findings.append("PASS: auditd is running")
+                findings.append("PASS: auditd je spustený")
                 auditd_active = True
             else:
-                findings.append("WARN: auditd does not appear to be running")
+                findings.append("WARN: auditd nevyznává že běží")
                 if require_auditd and status == 'pass':
                     status = 'warn'
         except Exception:
-            findings.append("WARN: Cannot determine auditd status")
+            findings.append("WARN: Nedá se zistiť stav auditd")
 
-    # Check auditd rules
     if auditd_active:
         try:
             result = subprocess.run(['auditctl', '-l'], capture_output=True, text=True)
@@ -51,7 +49,6 @@ def run(params=None):
                 if status == 'pass':
                     status = 'warn'
 
-            # Check for important audit rules
             important_rules = ['-w /etc/passwd', '-w /etc/shadow', '-w /etc/sudoers', '-w /var/log/auth.log']
             combined_rules = '\n'.join(result.stdout.splitlines())
             for rule in important_rules:
@@ -62,7 +59,6 @@ def run(params=None):
         except FileNotFoundError:
             findings.append("INFO: auditctl not available")
 
-    # Check syslog/rsyslog/journald
     if check_syslog:
         syslog_services = ['rsyslog', 'syslog', 'systemd-journald', 'syslog-ng']
         found_logger = False
@@ -79,7 +75,6 @@ def run(params=None):
             if status == 'pass':
                 status = 'warn'
 
-    # Check log file existence
     log_files = ['/var/log/auth.log', '/var/log/syslog', '/var/log/messages', '/var/log/kern.log']
     for lf in log_files:
         if os.path.isfile(lf):
@@ -89,7 +84,6 @@ def run(params=None):
             except Exception:
                 findings.append(f"INFO: Log file present: {lf}")
 
-    # Check log rotation
     if check_log_rotation:
         logrotate_conf = '/etc/logrotate.conf'
         logrotate_d = '/etc/logrotate.d'

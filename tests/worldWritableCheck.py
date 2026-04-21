@@ -13,7 +13,7 @@ def run(params=None):
     status = 'pass'
     ww_files = []
 
-    print(f"[*] Scanning for world-writable files in: {scan_paths}")
+    print(f"[*] Skenujem world-writable súbory v: {scan_paths}")
 
     try:
         # Build exclusion args
@@ -35,7 +35,7 @@ def run(params=None):
         findings.append("ERROR: Find timed out")
         return {'test_name': 'World-Writable Files Check', 'status': 'error', 'findings': findings}
 
-    print(f"[*] Found {len(ww_files)} world-writable file(s)")
+    print(f"[*] Našiel som {len(ww_files)} world-writable súbor(ov)")
 
     if ww_files:
         findings.append(f"WARN: {len(ww_files)} world-writable file(s) found")

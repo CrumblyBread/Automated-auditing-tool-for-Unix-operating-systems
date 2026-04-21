@@ -8,6 +8,117 @@ import argparse
 from datetime import datetime
 
 
+def _normalize_severity_value(value) -> str | None:
+    """
+    Normalizuje severitu na povolené hodnoty:
+    None, Low, Medium, High, Critical
+    """
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+
+    upper = s.upper()
+    mapping = {
+        "NONE": None,
+        "INFO": None,
+        "INFORMATION": None,
+        "LOW": "Low",
+        "MEDIUM": "Medium",
+        "MODERATE": "Medium",
+        "HIGH": "High",
+        "SEVERE": "High",
+        "CRITICAL": "Critical",
+    }
+    if upper in mapping:
+        return mapping[upper]
+
+    # Ak už niekto použil správny tvar (napr. "Low"), zachovaj.
+    allowed = {None, "Low", "Medium", "High", "Critical"}
+    if s in allowed:
+        return s
+
+    return None
+
+
+def _severity_from_status(status) -> str | None:
+    if status is None:
+        return None
+    s = str(status).strip().lower()
+    if not s:
+        return None
+
+    if "critical" in s:
+        return "Critical"
+    if "error" in s:
+        return "High"
+    if "fail" in s:
+        return "High"
+    if "warn" in s:
+        return "Medium"
+    if s in {"pass", "ok", "success", "completed"}:
+        return None
+
+    return None
+
+
+def _ensure_test_severity(result):
+    """
+    Zabezpečí, že výsledok testu (dict) bude obsahovať kľúč `severity`
+    s hodnotou: None/Low/Medium/High/Critical.
+    """
+    if not isinstance(result, dict):
+        return result
+
+    # Vždy prepíš severitu do novej škály (aj keď test už severity obsahuje)
+    result["severity"] = _severity_from_status(result.get("status"))
+    return result
+
+
+def _score_penalty_from_severity(severity) -> int:
+    sev = _normalize_severity_value(severity)
+    penalties = {
+        None: 0,
+        "Low": 1,
+        "Medium": 2,
+        "High": 3,
+        "Critical": 4,
+    }
+    return penalties.get(sev, 0)
+
+
+def _compute_score(results: dict) -> tuple[int, int, int]:
+    """
+    Vráti (score, max_score, n_tests).
+    Do n_tests počítame len položky, ktoré vyzerajú ako výsledok testu.
+    """
+    if not isinstance(results, dict):
+        return (0, 0, 0)
+
+    test_items = []
+    for k, v in results.items():
+        if k == "__summary__":
+            continue
+        if isinstance(v, dict) and v.get("status") in {"success", "error"}:
+            test_items.append(v)
+
+    n = len(test_items)
+    max_score = n * 4
+    total_penalty = 0
+    for r in test_items:
+        # Preferuj severity z výsledku testu; fallback na wrapper severity
+        sev = None
+        if isinstance(r.get('result'), dict):
+            sev = r['result'].get('severity')
+        if sev is None and 'severity' in r:
+            sev = r.get('severity')
+        total_penalty += _score_penalty_from_severity(sev)
+
+    score = max(0, max_score - total_penalty)
+    return (score, max_score, n)
+
+
 def _make_ssh_wrapper(host: str, ssh_user: str | None, ssh_key: str | None):
     _original_run = subprocess.run
 
@@ -90,13 +201,13 @@ class EnumerationFramework:
         try:
             with open(self.config_path, 'r') as f:
                 self.config = json.load(f)
-            print(f"Configuration loaded from {self.config_path}")
+            print(f"Konfigurácia načítaná zo súboru: {self.config_path}")
             return True
         except FileNotFoundError:
-            print(f"Configuration file not found: {self.config_path}")
+            print(f"Konfiguračný súbor sa nenašiel: {self.config_path}")
             return False
         except json.JSONDecodeError as e:
-            print(f"Error parsing configuration file: {e}")
+            print(f"Error pri parsovaní konfiguračného súboru: {e}")
             return False
 
     def load_test_module(self, test_path):
@@ -107,26 +218,26 @@ class EnumerationFramework:
             spec.loader.exec_module(module)
             return module
         except Exception as e:
-            print(f"Error loading test module {test_path}: {e}")
+            print(f"Error pri načítaní test modulu {test_path}: {e}")
             return None
 
     def discover_tests(self):
         if 'tests' not in self.config:
-            print("No tests defined in configuration")
+            print("V konfigurácii nie sú definované žiadne testy")
             return False
 
         tests_dir = self.config.get('tests_directory', 'tests')
 
         for test_config in self.config['tests']:
             if not test_config.get('enabled', False):
-                print(f"Skipping disabled test: {test_config['name']}")
+                print(f"Preskakujem deaktivovaný test: {test_config['name']}")
                 continue
 
             test_file = test_config['file']
             test_path = os.path.join(tests_dir, test_file)
 
             if not os.path.exists(test_path):
-                print(f"Test file not found: {test_path}")
+                print(f"Súbor testu sa nenašiel: {test_path}")
                 continue
 
             module = self.load_test_module(test_path)
@@ -135,15 +246,15 @@ class EnumerationFramework:
                     'module': module,
                     'config': test_config
                 }
-                print(f"Loaded test: {test_config['name']}")
+                print(f"Načítaný test: {test_config['name']}")
             else:
-                print(f"Test module {test_file} missing 'run' function")
+                print(f"Test modul {test_file} neobsahuje funkciu 'run'")
 
         return len(self.tests) > 0
 
     def run_test(self, test_name, test_info):
         print(f"\n{'='*50}")
-        print(f"Running: {test_name}")
+        print(f"Spúšťam: {test_name}")
         print(f"{'='*50}")
 
         try:
@@ -151,6 +262,7 @@ class EnumerationFramework:
             config = test_info['config']
             params = config.get('parameters', {})
             result = module.run(params)
+            result = _ensure_test_severity(result)
 
             self.results[test_name] = {
                 'status': 'success',
@@ -159,19 +271,20 @@ class EnumerationFramework:
             }
 
         except Exception as e:
-            print(f"Error executing test {test_name}: {e}")
+            print(f"Error pri vykonávaní testu {test_name}: {e}")
             self.results[test_name] = {
                 'status': 'error',
                 'error': str(e),
+                'severity': 'High',
                 'timestamp': datetime.now().isoformat()
             }
 
     def run_all_tests(self):
         if not self.tests:
-            print("No tests loaded to execute")
+            print("Nie sú načítané žiadne testy na spustenie")
             return
 
-        print(f"\nStarting enumeration with {len(self.tests)} test(s)")
+        print(f"\nSpúšťam audit s {len(self.tests)} test(ami)")
 
         for test_name, test_info in self.tests.items():
             self.run_test(test_name, test_info)
@@ -180,15 +293,20 @@ class EnumerationFramework:
 
     def print_summary(self):
         print(f"\n{'='*60}")
-        print("ENUMERATION SUMMARY")
+        print("SÚHRN AUDITU")
         print(f"{'='*60}")
 
         successful = sum(1 for r in self.results.values() if r['status'] == 'success')
         failed = sum(1 for r in self.results.values() if r['status'] == 'error')
 
-        print(f"Total tests run: {len(self.results)}")
-        print(f"Successful: {successful}")
-        print(f"Failed: {failed}")
+        print(f"Celkovo spustených testov: {len(self.results)}")
+        print(f"Úspešné: {successful}")
+        print(f"Neúspešné: {failed}")
+
+        # Bodové hodnotenie
+        score, max_score, n = _compute_score(self.results)
+
+        print(f"\nBodové hodnotenie: {score}/{max_score}")
 
         if self.config.get('save_results', False):
             self.save_results()
@@ -196,16 +314,33 @@ class EnumerationFramework:
     def save_results(self):
         output_file = self.config.get('output_file', 'enumeration_results.json')
         try:
+            score, max_score, n = _compute_score(self.results)
+            payload = dict(self.results)
+            payload["__summary__"] = {
+                "tests_count": n,
+                "score": score,
+                "max_score": max_score,
+                "scoring": {
+                    "start": "n*4",
+                    "penalties": {
+                        "Critical": 4,
+                        "High": 3,
+                        "Medium": 2,
+                        "Low": 1,
+                        "None": 0,
+                    },
+                },
+            }
             with open(output_file, 'w') as f:
-                json.dump(self.results, f, indent=2)
-            print(f"\nResults saved to: {output_file}")
+                json.dump(payload, f, indent=2)
+            print(f"\nVýsledky uložené do: {output_file}")
         except Exception as e:
-            print(f"Error saving results: {e}")
+            print(f"Error pri ukladaní výsledkov: {e}")
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Enumeration / security audit framework",
+        description="Rámec pre enumeráciu / bezpečnostný audit",
         formatter_class=argparse.RawTextHelpFormatter,
     )
 
@@ -216,7 +351,7 @@ def parse_args():
         help="Cesta ku konfiguračnému súboru (default: config.json)",
     )
 
-    remote_group = parser.add_argument_group("Remote mode (SSH)")
+    remote_group = parser.add_argument_group("Vzdialený režim (SSH)")
     remote_group.add_argument(
         "--remote",
         metavar="HOST",
@@ -259,7 +394,7 @@ def main():
     else:
         print("[Local mode] Testy sa spustia lokálne")
 
-    print("Start\n")
+    print("Štart\n")
 
     framework = EnumerationFramework(args.config)
 
@@ -267,12 +402,12 @@ def main():
         sys.exit(1)
 
     if not framework.discover_tests():
-        print("No tests loaded. Exiting.")
+        print("Nenačítali sa žiadne testy. Končím.")
         sys.exit(1)
 
     framework.run_all_tests()
 
-    print("\nEnumeration complete!")
+    print("\nAudit dokončený!")
 
 
 if __name__ == "__main__":

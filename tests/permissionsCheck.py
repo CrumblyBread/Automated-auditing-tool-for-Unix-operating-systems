@@ -43,7 +43,7 @@ def run(params):
                 'home_directory': home_base_dir
             }
         
-        print(f"Nájdených {len(home_dirs)} domovských adresárov")
+        print(f"Našiel som {len(home_dirs)} domovských adresárov")
         
         insecure_dirs = []
         secure_dirs = []

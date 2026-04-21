@@ -20,7 +20,7 @@ def run(params):
         )
         
         if update_result.returncode != 0:
-            print(f"Varovanie pri apt update: {update_result.stderr}")
+            print(f"Warning pri apt update: {update_result.stderr}")
         
         result = subprocess.run(
             ['apt', 'list', '--upgradable'],
@@ -46,7 +46,7 @@ def run(params):
         
         total_updates = len(upgradable_packages)
         
-        print(f"Nájdených {total_updates} aktualizovateľných balíkov")
+        print(f"Našiel som {total_updates} aktualizovateľných balíkov")
         
         if total_updates == 0:
             return {
@@ -186,7 +186,7 @@ def check_security_updates():
                         security_packages.append(parts[1])
         
     except Exception as e:
-        print(f"Chyba pri kontrole bezpečnostných aktualizácií: {e}")
+        print(f"Chyba pri kontrole security aktualizácií: {e}")
     
     return security_packages
 

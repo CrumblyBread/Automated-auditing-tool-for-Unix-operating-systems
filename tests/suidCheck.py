@@ -19,7 +19,7 @@ def run(params=None):
     found_suid = []
     found_sgid = []
 
-    print(f"[*] Scanning for SUID/SGID files in: {scan_paths}")
+    print(f"[*] Skenujem SUID/SGID súbory v: {scan_paths}")
 
     try:
         # Build find command
@@ -41,7 +41,7 @@ def run(params=None):
             except Exception:
                 found_suid.append(path)  # assume SUID if can't stat
 
-        print(f"[*] Found {len(found_suid)} SUID and {len(found_sgid)} SGID files")
+        print(f"[*] Našiel som {len(found_suid)} SUID a {len(found_sgid)} SGID súbor(ov)")
 
         for f in found_suid:
             if f in known_suid:
