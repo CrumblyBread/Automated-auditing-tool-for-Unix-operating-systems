@@ -9,10 +9,6 @@ from datetime import datetime
 
 
 def _normalize_severity_value(value) -> str | None:
-    """
-    Normalizuje severitu na povolené hodnoty:
-    None, Low, Medium, High, Critical
-    """
     if value is None:
         return None
     s = str(value).strip()
@@ -64,10 +60,6 @@ def _severity_from_status(status) -> str | None:
 
 
 def _ensure_test_severity(result):
-    """
-    Zabezpečí, že výsledok testu (dict) bude obsahovať kľúč `severity`
-    s hodnotou: None/Low/Medium/High/Critical.
-    """
     if not isinstance(result, dict):
         return result
 
@@ -89,10 +81,6 @@ def _score_penalty_from_severity(severity) -> int:
 
 
 def _compute_score(results: dict) -> tuple[int, int, int]:
-    """
-    Vráti (score, max_score, n_tests).
-    Do n_tests počítame len položky, ktoré vyzerajú ako výsledok testu.
-    """
     if not isinstance(results, dict):
         return (0, 0, 0)
 
@@ -119,7 +107,12 @@ def _compute_score(results: dict) -> tuple[int, int, int]:
     return (score, max_score, n)
 
 
-def _make_ssh_wrapper(host: str, ssh_user: str | None, ssh_key: str | None):
+def _make_ssh_wrapper(
+    host: str,
+    ssh_user: str | None,
+    ssh_key: str | None,
+    ssh_password: str | None,
+):
     _original_run = subprocess.run
 
     def ssh_run(cmd, *args, **kwargs):
@@ -127,9 +120,20 @@ def _make_ssh_wrapper(host: str, ssh_user: str | None, ssh_key: str | None):
             remote_cmd = " ".join(_shell_quote(c) for c in cmd)
         else:
             remote_cmd = cmd
+        print(f"  [SSH→{host}] {remote_cmd}")
+
+        if ssh_password:
+            return _paramiko_run(
+                host=host,
+                remote_cmd=remote_cmd,
+                user=ssh_user,
+                password=ssh_password,
+                original_run=_original_run,
+                original_run_args=args,
+                original_run_kwargs=kwargs,
+            )
 
         ssh_cmd = _build_ssh_cmd(host, remote_cmd, ssh_user, ssh_key)
-        print(f"  [SSH→{host}] {remote_cmd}")
         return _original_run(ssh_cmd, *args, **kwargs)
 
     return ssh_run
@@ -146,7 +150,7 @@ def _build_ssh_cmd(host: str, remote_cmd: str,
     base = [
         "ssh",
         "-o", "StrictHostKeyChecking=no",
-        "-o", "BatchMode=yes",          
+        "-o", "BatchMode=yes",
         "-o", "ConnectTimeout=10",
     ]
     if key:
@@ -155,17 +159,141 @@ def _build_ssh_cmd(host: str, remote_cmd: str,
     return base
 
 
+def _paramiko_run(
+    host: str,
+    remote_cmd: str,
+    user: str | None,
+    password: str,
+    original_run,
+    original_run_args,
+    original_run_kwargs,
+):
+    try:
+        import paramiko  # type: ignore
+    except Exception as e:
+        raise RuntimeError(
+            "Password-based SSH requires the 'paramiko' package. "
+            "Install it with: pip install paramiko"
+        ) from e
+
+    import subprocess as _subprocess
+
+    capture_output = bool(original_run_kwargs.get("capture_output", False))
+    text_mode = bool(original_run_kwargs.get("text", False))
+    encoding = original_run_kwargs.get("encoding", None)
+    errors = original_run_kwargs.get("errors", None)
+    timeout = original_run_kwargs.get("timeout", None)
+
+    # If caller didn't ask to capture output, keep behavior close to subprocess.run:
+    # stream remote stdout/stderr to local stdout/stderr.
+    want_bytes = not text_mode
+
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+    try:
+        client.connect(
+            hostname=host,
+            username=user,
+            password=password,
+            look_for_keys=False,
+            allow_agent=False,
+            timeout=10,
+            banner_timeout=10,
+            auth_timeout=10,
+        )
+
+        stdin, stdout, stderr = client.exec_command(remote_cmd, timeout=timeout)
+        out_b = stdout.read()
+        err_b = stderr.read()
+        rc = int(stdout.channel.recv_exit_status())
+
+        if capture_output:
+            if want_bytes:
+                out, err = out_b, err_b
+            else:
+                out = out_b.decode(encoding or "utf-8", errors=errors or "replace")
+                err = err_b.decode(encoding or "utf-8", errors=errors or "replace")
+            return _subprocess.CompletedProcess(
+                args=["ssh", f"{user}@{host}" if user else host, remote_cmd],
+                returncode=rc,
+                stdout=out,
+                stderr=err,
+            )
+
+        # Stream output to console (best-effort)
+        if out_b:
+            sys.stdout.buffer.write(out_b)
+            sys.stdout.buffer.flush()
+        if err_b:
+            sys.stderr.buffer.write(err_b)
+            sys.stderr.buffer.flush()
+        return _subprocess.CompletedProcess(
+            args=["ssh", f"{user}@{host}" if user else host, remote_cmd],
+            returncode=rc,
+            stdout=None,
+            stderr=None,
+        )
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
 def patch_subprocess_for_remote(host: str,
                                  ssh_user: str | None = None,
-                                 ssh_key: str | None = None):
+                                 ssh_key: str | None = None,
+                                 ssh_password: str | None = None):
 
-    subprocess.run = _make_ssh_wrapper(host, ssh_user, ssh_key)
+    subprocess.run = _make_ssh_wrapper(host, ssh_user, ssh_key, ssh_password)
     print(f"[Remote mode] subprocess.run presmerovaný na {host}")
 
 
 def verify_ssh_connectivity(host: str,
                              ssh_user: str | None = None,
-                             ssh_key: str | None = None) -> bool:
+                             ssh_key: str | None = None,
+                             ssh_password: str | None = None) -> bool:
+    if ssh_password:
+        try:
+            import paramiko  # type: ignore
+        except Exception as e:
+            print(
+                "[Remote mode] Password-based SSH vyžaduje balík 'paramiko'. "
+                "Nainštalujte ho: pip install paramiko"
+            )
+            print(f"[Remote mode] Detail: {e}")
+            return False
+
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        try:
+            client.connect(
+                hostname=host,
+                username=ssh_user,
+                password=ssh_password,
+                look_for_keys=False,
+                allow_agent=False,
+                timeout=10,
+                banner_timeout=10,
+                auth_timeout=10,
+            )
+            _, stdout, _ = client.exec_command("echo OK", timeout=10)
+            out = stdout.read().decode("utf-8", errors="replace")
+            if "OK" in out:
+                print(f"[Remote mode] SSH spojenie s {host} overené ✓")
+                return True
+            print("[Remote mode] SSH spojenie zlyhalo: neočakávaná odpoveď")
+            return False
+        except Exception as e:
+            print(f"[Remote mode] SSH spojenie zlyhalo: {e}")
+            return False
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
+
     target = f"{ssh_user}@{host}" if ssh_user else host
     cmd = ["ssh",
            "-o", "StrictHostKeyChecking=no",
@@ -353,6 +481,7 @@ def parse_args():
 
     remote_group = parser.add_argument_group("Vzdialený režim (SSH)")
     remote_group.add_argument(
+        "-r",
         "--remote",
         metavar="HOST",
         help=(
@@ -362,14 +491,31 @@ def parse_args():
         ),
     )
     remote_group.add_argument(
+        "-u",
         "--ssh-user",
         metavar="USER",
         help="SSH užívateľ (default: aktuálny lokálny užívateľ)",
     )
     remote_group.add_argument(
+        "-k",
         "--ssh-key",
         metavar="PATH",
         help="Cesta k SSH private key (default: ~/.ssh/id_rsa)",
+    )
+    remote_group.add_argument(
+        "-p",
+        "--ssh-password",
+        metavar="PASSWORD",
+        help=(
+            "SSH heslo (password auth). "
+            "Pozn.: pre neinteraktívny beh vyžaduje 'paramiko' (pip install paramiko).\n"
+            "Bezpečnejšia alternatíva je --ssh-password-env."
+        ),
+    )
+    remote_group.add_argument(
+        "--ssh-password-env",
+        metavar="ENV_VAR",
+        help="Názov env premennej obsahujúcej SSH heslo (napr. SSH_PASSWORD).",
     )
     remote_group.add_argument(
         "--no-verify",
@@ -385,12 +531,16 @@ def main():
     if args.remote:
         print(f"\n[Remote mode] Cieľový host: {args.remote}")
 
+        ssh_password = args.ssh_password
+        if not ssh_password and args.ssh_password_env:
+            ssh_password = os.environ.get(args.ssh_password_env)
+
         if not args.no_verify:
-            if not verify_ssh_connectivity(args.remote, args.ssh_user, args.ssh_key):
+            if not verify_ssh_connectivity(args.remote, args.ssh_user, args.ssh_key, ssh_password):
                 print("Nepodarilo sa overiť SSH spojenie. Použite --no-verify na preskočenie.")
                 sys.exit(1)
 
-        patch_subprocess_for_remote(args.remote, args.ssh_user, args.ssh_key)
+        patch_subprocess_for_remote(args.remote, args.ssh_user, args.ssh_key, ssh_password)
     else:
         print("[Local mode] Testy sa spustia lokálne")
 
