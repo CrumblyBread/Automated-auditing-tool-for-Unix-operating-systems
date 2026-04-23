@@ -7,6 +7,14 @@ import subprocess
 import argparse
 from datetime import datetime
 
+# Windows konzola často používa cp1252 a zhadzuje sa na diakritike (napr. v --help).
+try:
+    if os.name == "nt":
+        sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
+        sys.stderr.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
+except Exception:
+    pass
+
 
 def _normalize_severity_value(value) -> str | None:
     if value is None:

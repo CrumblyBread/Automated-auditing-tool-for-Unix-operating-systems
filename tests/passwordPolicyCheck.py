@@ -1,7 +1,18 @@
 #!/usr/bin/env python3
 import subprocess
-import os
 import re
+import shlex
+
+def _read_file_via_cat(path: str):
+    result = subprocess.run(
+        ["sh", "-lc", f"cat {shlex.quote(path)}"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        err = (result.stderr or "").strip()
+        raise RuntimeError(err or f"Failed to read {path}")
+    return result.stdout
 
 def run(params=None):
     if params is None:
@@ -16,10 +27,8 @@ def run(params=None):
 
     # Check /etc/login.defs
     login_defs = '/etc/login.defs'
-    if os.path.isfile(login_defs):
-        try:
-            with open(login_defs) as f:
-                content = f.read()
+    try:
+        content = _read_file_via_cat(login_defs)
 
             # PASS_MIN_LEN
             m = re.search(r'^\s*PASS_MIN_LEN\s+(\d+)', content, re.MULTILINE)
@@ -56,19 +65,22 @@ def run(params=None):
                 val = int(m.group(1))
                 findings.append(f"INFO: PASS_MIN_DAYS is {val}")
 
-        except Exception as e:
+    except Exception as e:
+        msg = str(e).lower()
+        if ("no such file" in msg) or ("not found" in msg):
+            findings.append(f"WARN: {login_defs} not found")
+            if status == 'pass':
+                status = 'warn'
+        elif "permission denied" in msg:
+            findings.append(f"INFO: Cannot read {login_defs} (need root)")
+        else:
             findings.append(f"ERROR: Could not read {login_defs}: {e}")
-    else:
-        findings.append(f"WARN: {login_defs} not found")
-        if status == 'pass':
-            status = 'warn'
 
     # Check PAM pwquality / cracklib
     if check_complexity:
         pwquality_conf = '/etc/security/pwquality.conf'
-        if os.path.isfile(pwquality_conf):
-            with open(pwquality_conf) as f:
-                pq = f.read()
+        try:
+            pq = _read_file_via_cat(pwquality_conf)
             findings.append("INFO: pwquality.conf found (complexity enforcement available)")
             m = re.search(r'^\s*minlen\s*=\s*(\d+)', pq, re.MULTILINE)
             if m:
@@ -79,16 +91,17 @@ def run(params=None):
                     findings.append(f"FAIL: pwquality minlen = {val} (required: {min_length})")
                     status = 'fail'
             pam_pam = '/etc/pam.d/common-password'
-            if os.path.isfile(pam_pam):
-                with open(pam_pam) as f:
-                    pam_content = f.read()
+            try:
+                pam_content = _read_file_via_cat(pam_pam)
                 if 'pwquality' in pam_content or 'cracklib' in pam_content:
                     findings.append("PASS: PAM password complexity module is active")
                 else:
                     findings.append("WARN: No password complexity module found in PAM common-password")
                     if status == 'pass':
                         status = 'warn'
-        else:
+            except Exception:
+                findings.append("INFO: PAM common-password not readable or not present")
+        except Exception:
             findings.append("WARN: /etc/security/pwquality.conf not found — password complexity may not be enforced")
             if status == 'pass':
                 status = 'warn'

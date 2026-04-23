@@ -1,8 +1,21 @@
 #!/usr/bin/env python3
 import subprocess
-import os
-import pwd
-import grp
+import shlex
+
+def _sh(cmd: str, timeout: int | None = None):
+    return subprocess.run(["sh", "-lc", cmd], capture_output=True, text=True, timeout=timeout)
+
+def _cat(path: str):
+    r = _sh(f"cat {shlex.quote(path)}")
+    if r.returncode != 0:
+        raise RuntimeError((r.stderr or "").strip() or f"Failed to read {path}")
+    return r.stdout
+
+def _list_dir(path: str):
+    r = _sh(f"ls -1A {shlex.quote(path)} 2>/dev/null")
+    if r.returncode != 0:
+        return []
+    return [l.strip() for l in r.stdout.splitlines() if l.strip()]
 
 def run(params=None):
     if params is None:
@@ -20,9 +33,13 @@ def run(params=None):
     if check_uid0:
         uid0_users = []
         try:
-            for entry in pwd.getpwall():
-                if entry.pw_uid == 0:
-                    uid0_users.append(entry.pw_name)
+            r = _sh("getent passwd")
+            if r.returncode != 0:
+                raise RuntimeError((r.stderr or "").strip() or "getent passwd failed")
+            for line in r.stdout.splitlines():
+                parts = line.strip().split(":")
+                if len(parts) >= 3 and parts[2].isdigit() and int(parts[2]) == 0:
+                    uid0_users.append(parts[0])
             unexpected_uid0 = [u for u in uid0_users if u not in allowed_uid0]
             if unexpected_uid0:
                 findings.append(f"CRITICAL: Unexpected UID 0 accounts: {', '.join(unexpected_uid0)}")
@@ -35,34 +52,47 @@ def run(params=None):
     # --- Accounts with no password (shadow) ---
     if check_no_password:
         try:
-            with open('/etc/shadow') as f:
-                for line in f:
-                    parts = line.strip().split(':')
-                    if len(parts) >= 2:
-                        username = parts[0]
-                        password_field = parts[1]
-                        if password_field == '':
-                            findings.append(f"CRITICAL: User '{username}' has no password set")
-                            status = 'critical'
-                        elif password_field == '!!' or password_field == '!':
-                            findings.append(f"INFO: User '{username}' is locked (no login possible)")
+            shadow = _cat("/etc/shadow")
+            for line in shadow.splitlines():
+                parts = line.strip().split(':')
+                if len(parts) >= 2:
+                    username = parts[0]
+                    password_field = parts[1]
+                    if password_field == '':
+                        findings.append(f"CRITICAL: User '{username}' has no password set")
+                        status = 'critical'
+                    elif password_field == '!!' or password_field == '!':
+                        findings.append(f"INFO: User '{username}' is locked (no login possible)")
             if not any('no password' in f for f in findings):
                 findings.append("PASS: No accounts found with empty passwords")
-        except PermissionError:
-            findings.append("INFO: Cannot read /etc/shadow (need root)")
-        except FileNotFoundError:
-            findings.append("WARN: /etc/shadow not found")
+        except Exception as e:
+            msg = str(e).lower()
+            if ("permission denied" in msg):
+                findings.append("INFO: Cannot read /etc/shadow (need root)")
+            elif ("no such file" in msg) or ("not found" in msg):
+                findings.append("WARN: /etc/shadow not found")
+            else:
+                findings.append(f"INFO: Could not read /etc/shadow: {e}")
 
     # --- Login shells for service accounts ---
     if check_shell:
         non_login_shells = ['/usr/sbin/nologin', '/bin/false', '/sbin/nologin', '/bin/nologin']
         service_with_shell = []
         try:
-            for entry in pwd.getpwall():
-                # Typical service UIDs are 1-999 (excluding root=0)
-                if 0 < entry.pw_uid < 1000:
-                    if entry.pw_shell not in non_login_shells:
-                        service_with_shell.append(f"{entry.pw_name} (uid={entry.pw_uid}, shell={entry.pw_shell})")
+            r = _sh("getent passwd")
+            if r.returncode != 0:
+                raise RuntimeError((r.stderr or "").strip() or "getent passwd failed")
+            for line in r.stdout.splitlines():
+                parts = line.strip().split(":")
+                if len(parts) < 7:
+                    continue
+                user = parts[0]
+                uid_s = parts[2]
+                shell = parts[6]
+                if uid_s.isdigit():
+                    uid = int(uid_s)
+                    if 0 < uid < 1000 and shell not in non_login_shells:
+                        service_with_shell.append(f"{user} (uid={uid}, shell={shell})")
             if service_with_shell:
                 for u in service_with_shell:
                     findings.append(f"WARN: Service account with login shell: {u}")
@@ -84,19 +114,18 @@ def run(params=None):
             # Check for NOPASSWD in sudoers
             sudoers_files = ['/etc/sudoers']
             sudoers_dir = '/etc/sudoers.d'
-            if os.path.isdir(sudoers_dir):
-                for f in os.listdir(sudoers_dir):
-                    sudoers_files.append(os.path.join(sudoers_dir, f))
+            for f in _list_dir(sudoers_dir):
+                sudoers_files.append(f"{sudoers_dir.rstrip('/')}/{f}")
 
             for sf in sudoers_files:
                 try:
-                    with open(sf) as f:
-                        for line in f:
-                            if 'NOPASSWD' in line and not line.strip().startswith('#'):
-                                findings.append(f"WARN: NOPASSWD entry in {sf}: {line.strip()}")
-                                if status == 'pass':
-                                    status = 'warn'
-                except (PermissionError, FileNotFoundError):
+                    content = _cat(sf)
+                    for line in content.splitlines():
+                        if 'NOPASSWD' in line and not line.strip().startswith('#'):
+                            findings.append(f"WARN: NOPASSWD entry in {sf}: {line.strip()}")
+                            if status == 'pass':
+                                status = 'warn'
+                except Exception:
                     findings.append(f"INFO: Cannot read {sf} (need root)")
 
         except Exception as e:
@@ -105,8 +134,14 @@ def run(params=None):
     # --- Check for duplicate UIDs ---
     try:
         uids = {}
-        for entry in pwd.getpwall():
-            uids.setdefault(entry.pw_uid, []).append(entry.pw_name)
+        r = _sh("getent passwd")
+        if r.returncode != 0:
+            raise RuntimeError((r.stderr or "").strip() or "getent passwd failed")
+        for line in r.stdout.splitlines():
+            parts = line.strip().split(":")
+            if len(parts) >= 3 and parts[2].isdigit():
+                uid = int(parts[2])
+                uids.setdefault(uid, []).append(parts[0])
         for uid, users in uids.items():
             if len(users) > 1 and uid != 65534:  # 65534 is nobody
                 findings.append(f"WARN: Duplicate UID {uid} shared by: {', '.join(users)}")

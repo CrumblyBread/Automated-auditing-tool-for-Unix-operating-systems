@@ -1,6 +1,31 @@
 #!/usr/bin/env python3
-import os
 import subprocess
+import shlex
+
+def _sh(cmd: str, timeout: int | None = None):
+    return subprocess.run(["sh", "-lc", cmd], capture_output=True, text=True, timeout=timeout)
+
+def _is_file(path: str) -> bool:
+    r = _sh(f"test -f {shlex.quote(path)}")
+    return r.returncode == 0
+
+def _is_dir(path: str) -> bool:
+    r = _sh(f"test -d {shlex.quote(path)}")
+    return r.returncode == 0
+
+def _file_size(path: str):
+    r = _sh(f"stat -c %s {shlex.quote(path)} 2>/dev/null")
+    if r.returncode == 0:
+        s = (r.stdout or "").strip()
+        if s.isdigit():
+            return int(s)
+    return None
+
+def _list_dir(path: str):
+    r = _sh(f"ls -1A {shlex.quote(path)} 2>/dev/null")
+    if r.returncode != 0:
+        return []
+    return [l.strip() for l in r.stdout.splitlines() if l.strip()]
 
 def run(params=None):
     if params is None:
@@ -77,24 +102,27 @@ def run(params=None):
 
     log_files = ['/var/log/auth.log', '/var/log/syslog', '/var/log/messages', '/var/log/kern.log']
     for lf in log_files:
-        if os.path.isfile(lf):
+        if _is_file(lf):
             try:
-                size = os.path.getsize(lf)
-                findings.append(f"INFO: Log file present: {lf} ({size} bytes)")
+                size = _file_size(lf)
+                if size is None:
+                    findings.append(f"INFO: Log file present: {lf}")
+                else:
+                    findings.append(f"INFO: Log file present: {lf} ({size} bytes)")
             except Exception:
                 findings.append(f"INFO: Log file present: {lf}")
 
     if check_log_rotation:
         logrotate_conf = '/etc/logrotate.conf'
         logrotate_d = '/etc/logrotate.d'
-        if os.path.isfile(logrotate_conf):
+        if _is_file(logrotate_conf):
             findings.append("PASS: logrotate.conf present")
         else:
             findings.append("WARN: /etc/logrotate.conf not found")
             if status == 'pass':
                 status = 'warn'
-        if os.path.isdir(logrotate_d):
-            count = len(os.listdir(logrotate_d))
+        if _is_dir(logrotate_d):
+            count = len(_list_dir(logrotate_d))
             findings.append(f"INFO: {count} logrotate.d config(s) found")
 
     return {'test_name': 'Audit Logging Configuration', 'status': status, 'findings': findings}

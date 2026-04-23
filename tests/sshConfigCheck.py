@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-import os
 import re
+import subprocess
+import shlex
 
 def run(params=None):
     if params is None:
@@ -14,15 +15,27 @@ def run(params=None):
     findings = []
     status = 'pass'
 
-    if not os.path.isfile(sshd_config_path):
-        findings.append(f"WARN: sshd_config not found at {sshd_config_path}")
-        return {'test_name': 'SSH Configuration Check', 'status': 'warn', 'findings': findings}
-
     try:
-        with open(sshd_config_path) as f:
-            content = f.read()
-    except PermissionError:
-        findings.append(f"ERROR: Permission denied reading {sshd_config_path} (run as root)")
+        # Use cat so it works when subprocess.run is SSH-redirected.
+        result = subprocess.run(
+            ["sh", "-lc", f"cat {shlex.quote(sshd_config_path)}"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            err = (result.stderr or "").strip()
+            err_l = err.lower()
+            if ("no such file" in err_l) or ("not found" in err_l):
+                findings.append(f"WARN: sshd_config not found at {sshd_config_path}")
+                return {'test_name': 'SSH Configuration Check', 'status': 'warn', 'findings': findings}
+            if "permission denied" in err_l:
+                findings.append(f"ERROR: Permission denied reading {sshd_config_path} (run as root)")
+                return {'test_name': 'SSH Configuration Check', 'status': 'error', 'findings': findings}
+            findings.append(f"ERROR: Could not read {sshd_config_path}: {err or 'unknown error'}")
+            return {'test_name': 'SSH Configuration Check', 'status': 'error', 'findings': findings}
+        content = result.stdout
+    except Exception as e:
+        findings.append(f"ERROR: Could not read {sshd_config_path}: {e}")
         return {'test_name': 'SSH Configuration Check', 'status': 'error', 'findings': findings}
 
     def get_setting(key):

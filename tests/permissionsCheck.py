@@ -1,8 +1,41 @@
 #!/usr/bin/env python3
 import subprocess
-import os
 import stat
-import pwd
+
+import shlex
+
+def _sh(cmd: str, timeout: int | None = None):
+    return subprocess.run(["sh", "-lc", cmd], capture_output=True, text=True, timeout=timeout)
+
+def _path_exists(path: str) -> bool:
+    return _sh(f"test -e {shlex.quote(path)}").returncode == 0
+
+def _list_dirs(path: str):
+    # Return list of full paths to immediate subdirectories
+    r = _sh(f"ls -1A {shlex.quote(path)} 2>/dev/null")
+    if r.returncode != 0:
+        return None
+    entries = [l.strip() for l in r.stdout.splitlines() if l.strip()]
+    out = []
+    for e in entries:
+        full = f"{path.rstrip('/')}/{e}"
+        if _sh(f"test -d {shlex.quote(full)}").returncode == 0:
+            out.append(full)
+    return out
+
+def _stat_mode_uid(path: str):
+    r = _sh(f"stat -c '%a %u %U' {shlex.quote(path)} 2>/dev/null")
+    if r.returncode != 0:
+        return (None, None, None)
+    parts = (r.stdout or "").strip().strip("'").split()
+    if len(parts) < 2:
+        return (None, None, None)
+    mode_s = parts[0]
+    uid_s = parts[1]
+    user_s = parts[2] if len(parts) >= 3 else None
+    if not mode_s.isdigit() or not uid_s.isdigit():
+        return (None, None, None)
+    return (int(mode_s, 10), int(uid_s, 10), user_s)
 
 
 def run(params):
@@ -15,7 +48,7 @@ def run(params):
     max_permissions = params.get('max_permissions', '755')
     
     try:
-        if not os.path.exists(home_base_dir):
+        if not _path_exists(home_base_dir):
             return {
                 'status': 'ERROR',
                 'message': f'Adresár {home_base_dir} neexistuje',
@@ -24,10 +57,10 @@ def run(params):
         
         home_dirs = []
         try:
-            for entry in os.listdir(home_base_dir):
-                full_path = os.path.join(home_base_dir, entry)
-                if os.path.isdir(full_path):
-                    home_dirs.append(full_path)
+            dirs = _list_dirs(home_base_dir)
+            if dirs is None:
+                raise PermissionError("Cannot list directory")
+            home_dirs.extend(dirs)
         except PermissionError:
             return {
                 'status': 'ERROR',
@@ -122,18 +155,22 @@ def check_directory_permissions(dir_path, check_world_readable, check_world_writ
     }
     
     try:
-        stat_info = os.stat(dir_path)
-        mode = stat_info.st_mode
+        mode_octal, uid, user = _stat_mode_uid(dir_path)
+        if mode_octal is None:
+            raise RuntimeError("stat failed")
+        # Convert e.g. 750 -> bits int
+        mode = int(str(mode_octal), 8)
         
         permissions_octal = oct(stat.S_IMODE(mode))[2:]
         result['permissions_octal'] = permissions_octal
         result['permissions_symbolic'] = stat.filemode(mode)
         
-        try:
-            owner_info = pwd.getpwuid(stat_info.st_uid)
-            result['owner'] = owner_info.pw_name
-        except KeyError:
-            result['owner'] = f'UID:{stat_info.st_uid}'
+        if user:
+            result['owner'] = user
+        elif uid is not None:
+            result['owner'] = f'UID:{uid}'
+        else:
+            result['owner'] = 'unknown'
         
         if check_world_readable and mode & stat.S_IROTH:
             result['is_insecure'] = True
