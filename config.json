@@ -225,7 +225,7 @@
     },
     {
       "name": "Suspicious Process Check",
-      "file": "suspiciousProcessCheck.py",
+      "file": "suspiciousProcessCheck.sh",
       "enabled": true,
       "description": "Detekcia skrytých PID, procesov so zmazanou binárkou a procesov spustených z podozrivých adresárov (/tmp, /dev/shm)",
       "parameters": {
@@ -234,7 +234,7 @@
     },
     {
       "name": "Docker Container Security Check",
-      "file": "dockerSecurityCheck.py",
+      "file": "dockerSecurityCheck.sh",
       "enabled": true,
       "description": "Kontrola bezpečnosti Docker/Podman: privilegované kontajnery, Docker socket mount, zdieľané namespaces, limity zdrojov, daemon.json",
       "parameters": {
@@ -243,7 +243,7 @@
     },
     {
       "name": "Backup Verification Check",
-      "file": "backupVerificationCheck.py",
+      "file": "backupVerificationCheck.sh",
       "enabled": true,
       "description": "Overenie existencie a čerstvosti záloh (rsnapshot, borg, restic, bacula, timeshift). Vyžaduje zálohu mladšiu ako max_backup_age_days.",
       "parameters": {
@@ -253,7 +253,7 @@
     },
     {
       "name": "TLS and Crypto Configuration Check",
-      "file": "tlsCryptoCheck.py",
+      "file": "tlsCryptoCheck.sh",
       "enabled": true,
       "description": "Kontrola kryptografickej konfigurácie: systémová crypto politika, MinProtocol TLS, slabé SSH šifry/MAC/KEX, expirácia certifikátov.",
       "parameters": {

@@ -1,76 +1,107 @@
 # Automated auditing tool for Unix operating systems
 
-Modulárny auditovací nástroj pre Unix/Linux systémy postavený na jednoduchom „enumeration frameworku“.
-Audit je definovaný konfiguračným súborom a realizovaný samostatnými testami v zložke `tests/`.
+Modulárny auditovací nástroj pre Unix/Linux systémy. Projekt obsahuje **Python verziu** (modulárny framework + testy)
+a zároveň aj **Bash testy** (v zložke `tests/`).
+
+> Poznámka: `config.json` môže byť v rôznych fázach práce nastavený pre Bash alebo Python testy.
+> Pri spúšťaní vždy skontroluj, či pole `tests[].file` odkazuje na existujúce súbory.
 
 ## Prehľad
 
-- **Spúšťací skript**: `main.sh`
-- **Konfigurácia auditu**: `config.json`
-- **Testy**: `tests/*.sh` (každý test je samostatný shell skript s funkciou `run()`)
-- **Výstup**: JSON súbor (napr. `enumeration_results.json`) so stavom a konzolovým výstupom testov
+- **Python runner**: `main.py`
+- **Python testy**: `tests/*.py` (každý modul musí mať funkciu `run(params)` alebo `run(params=None)`)
+- **Bash testy**: `tests/*.sh`
+- **Konfigurácia**: `config.json`
+- **Výstup**:
+  - Python: `enumeration_results.json` (štruktúrovaný JSON s výsledkami + `__summary__`)
+  - Bash: závisí od konkrétneho runneru / implementácie
 
 ## Požiadavky
 
-- Bash (Linux/Unix prostredie)
-- `jq` (povinné; parsovanie `config.json`)
-- Typické systémové nástroje podľa konkrétnych testov (napr. `apt-get`, `systemctl`, `ufw`, `ss`, `iptables`, `nft`, …)
+### Python verzia
 
-Na Ubuntu:
+- Python 3.10+ (odporúčané)
+- (voliteľne) `paramiko` len ak chceš SSH cez heslo
+
+### Bash verzia
+
+- Bash
+- `jq` (povinné)
+- nástroje podľa konkrétnych testov (napr. `apt`, `systemctl`, `ufw`, `ss`, `iptables`, `nft`, …)
+
+Na Ubuntu/Debian:
 
 ```bash
-sudo apt update
 sudo apt install -y jq
 ```
 
-## Rýchly štart
+## Spustenie (Bash)
+
+```bash
+chmod +x ./main.sh tests/*.sh
+./main.sh
+```
+
+Parametre z `config.json` → `parameters` sa exportujú ako premenné prostredia
+(`min_kernel_version` → `MIN_KERNEL_VERSION`). Testy v `tests/*.sh` ich čítajú pri behu.
+
+V `config.json` uvádzaj súbory ako `tests/nazovCheck.sh` (prípadne `.py` sa mapuje na `.sh`).
+
+## Spustenie (Python)
 
 V koreňovej zložke projektu:
 
 ```bash
-chmod +x ./main.sh
-./main.sh
+python3 main.py
 ```
 
-Ak chceš použiť iný konfiguračný súbor:
+Použitie vlastnej konfigurácie:
 
 ```bash
-./main.sh ./config.json
+python3 main.py ./config.json
 ```
 
-## Konfigurácia (`config.json`)
+### Vzdialený režim (SSH)
 
-Základné polia:
+Python verzia podporuje presmerovanie volaní `subprocess.run` cez SSH.
 
-- **`tests_directory`**: zložka s testami (default `tests`)
-- **`save_results`**: či sa má uložiť výstup (true/false)
-- **`output_file`**: cesta k výslednému JSON súboru
-- **`tests[]`**: zoznam testov
+Kľúčový scenár (SSH key):
 
-Každý test má:
+```bash
+python3 main.py ./config.json --remote 192.168.1.10 --ssh-user user --ssh-key ~/.ssh/id_rsa
+```
 
-- **`name`**: názov zobrazený v konzole a vo výstupe
-- **`file`**: názov testu (pozri poznámku nižšie)
-- **`enabled`**: true/false
-- **`description`**: popis
-- **`parameters`**: ľubovoľný objekt s parametrami testu
+Heslo (vyžaduje `paramiko`):
 
-### Poznámka k poľu `file`
+```bash
+pip install paramiko
+python3 main.py ./config.json --remote 192.168.1.10 --ssh-user user --ssh-password-env SSH_PASSWORD
+```
 
-`main.sh` aktuálne **automaticky prevádza** hodnotu `file` z prípony `.py` na `.sh`
-(napr. `firewallCheck.py` → `tests/firewallCheck.sh`).
+## Konfigurácia (Python)
 
-Odporúčanie: v `config.json` používaj rovnaký názov ako v `tests/` a drž sa konvencie projektu
-(`SomethingCheck.py` v `file`, reálne `SomethingCheck.sh` v `tests/`).
+Základné polia v `config.json`:
 
-Príklad:
+- `tests_directory` (default `tests`)
+- `save_results` (true/false)
+- `output_file` (default `enumeration_results.json`)
+- `tests[]` (zoznam testov)
+
+Každý test:
+
+- `name`: názov testu
+- `file`: názov Python súboru v `tests/` (napr. `firewallCheck.py`)
+- `enabled`: true/false
+- `parameters`: objekt parametrov, ktorý sa odovzdá do `run(params)`
+
+Príklad jednej položky:
 
 ```json
 {
   "name": "Firewall Status Check",
   "file": "firewallCheck.py",
   "enabled": true,
-  "description": "Checks UFW, iptables and nftables firewall status and rules",
+  "description": "Kontrola stavu firewallu (ufw)",
   "parameters": {
     "require_active": true,
     "check_rules": true
@@ -78,34 +109,30 @@ Príklad:
 }
 ```
 
-## Výstupy
+## Výstupy (Python)
 
-Ak je `save_results: true`, po behu sa vytvorí JSON súbor (default `enumeration_results.json`).
-Obsahuje pre každý test:
+Ak `save_results: true`, vytvorí sa JSON (default `enumeration_results.json`) so štruktúrou:
 
-- `status`: `success` alebo `error` (či skript dobehol bez chyby)
-- `output`: celý textový výstup testu (stdout/stderr)
-- `timestamp`: ISO čas behu testu
+- per-test:
+  - `status`: `success` alebo `error` (stav spustenia modulu)
+  - `timestamp`: čas behu
+  - `result`: návratová hodnota `run(params)` (typicky `status` + findings/fields)
+- `__summary__`:
+  - `tests_count`, `score`, `max_score` a pravidlá penalizácie podľa `severity`
 
-Poznámka: jednotlivé testy typicky vypisujú vlastnú hlavičku a riadok `Status: <pass|warn|fail|critical>`.
-Tento „vnútorný status“ je určený pre ľudské čítanie a/alebo ďalšie spracovanie v budúcnosti.
+## Ako pridať vlastný Python test
 
-## Spúšťanie ako root (sudo)
+Pozri návod: `CREATE_PYTHON_TEST_TUTORIAL.md`.
 
-Niektoré testy vyžadujú zvýšené oprávnenia (napr. čítanie určitých súborov, enumerácia pravidiel firewallu).
-Ak vidíš neúplné výsledky alebo `permission denied`, spusti audit s `sudo`:
+## Troubleshooting (Python)
 
-```bash
-sudo ./main.sh
-```
+- **`File not found` / test sa nenačíta**: skontroluj `tests[].file` v `config.json` a existenciu súboru v `tests/`
+- **`Permission denied`**: niektoré príkazy/súbory vyžadujú root; spusti `sudo python3 main.py ...`
+- **Remote režim**: niektoré moduly čítajú súbory priamo (lokálne). Pre kompatibilitu s `--remote` preferuj čítanie cez `subprocess.run(["sh","-lc","cat ..."])` (viď tutorial).
 
-## Troubleshooting
+## Troubleshooting (Bash)
 
-- **`jq: command not found`**: doinštaluj `jq` (Ubuntu: `sudo apt install jq`)
-- **Test sa nenačíta**: `main.sh` vyžaduje, aby test existoval v `tests/` a obsahoval funkciu `run()`
-- **Test hlási chýbajúci nástroj**: nainštaluj závislosť na auditovanom systéme (napr. `ufw`, `iproute2`)
-- **Audit trvá dlho**: niektoré testy spúšťajú príkazy nad väčším množstvom dát (balíky, služby, filesystem)
-
-## Ako pridať vlastný test
-
-Pozri samostatný návod: `docs/CREATE_TEST_TUTORIAL.md`.
+- **`jq: command not found`**: nainštaluj `jq`
+- **`No tests loaded`**: skontroluj, či `tests[].file` ukazuje na existujúci `tests/*.sh`
+- **Test `error` v súhrne**: skript skončil nenulovým exit kódom (napr. chýbajúci `/home`); pozri výstup testu v konzole alebo v JSON
+- **Čiastočné výsledky**: niektoré testy vyžadujú `sudo ./main.sh` (firewall, sysctl, …)

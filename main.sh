@@ -1,27 +1,73 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Enumeration Framework - main.sh
+# Enumeration Framework - main.sh (Bash edition)
 # Usage: ./main.sh [config.json]
 # =============================================================================
 
 set -euo pipefail
 
-# ── Defaults ─────────────────────────────────────────────────────────────────
 CONFIG_PATH="${1:-config.json}"
 TESTS_DIR=""
 OUTPUT_FILE=""
-SAVE_RESULTS=""
+SAVE_RESULTS="false"
 
 declare -A RESULTS_STATUS
 declare -A RESULTS_OUTPUT
 declare -A RESULTS_TIMESTAMP
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 require_jq() {
     if ! command -v jq &>/dev/null; then
         echo "ERROR: 'jq' is required but not installed. Install it with: sudo apt install jq" >&2
         exit 1
     fi
+}
+
+# config "file" may be name.sh, name.py (→ name.sh), or bare name (→ name.sh)
+resolve_test_path() {
+    local file="$1"
+    local base
+
+    if [[ "$file" == *.sh ]]; then
+        base="$file"
+    elif [[ "$file" == *.py ]]; then
+        base="${file%.py}.sh"
+    else
+        base="${file}.sh"
+    fi
+
+    echo "${TESTS_DIR}/${base}"
+}
+
+# Export config parameters as ENV vars: min_kernel_version → MIN_KERNEL_VERSION
+export_test_params() {
+    local params_json="${1:-{}}"
+
+    if [[ -z "$params_json" || "$params_json" == "null" ]]; then
+        return 0
+    fi
+
+    local key val val_type env_key
+    while IFS= read -r key; do
+        [[ -z "$key" ]] && continue
+        env_key=$(echo "$key" | tr '[:lower:]' '[:upper:]')
+        val_type=$(jq -r --arg k "$key" '.[$k] | type' <<<"$params_json")
+
+        case "$val_type" in
+            array)
+                val=$(jq -r --arg k "$key" '.[$k] | map(tostring) | join(" ")' <<<"$params_json")
+                ;;
+            boolean|number)
+                val=$(jq -r --arg k "$key" '.[$k] | tostring' <<<"$params_json")
+                ;;
+            *)
+                val=$(jq -r --arg k "$key" '.[$k] | tostring' <<<"$params_json")
+                ;;
+        esac
+
+        export "${env_key}=${val}"
+    done < <(jq -r 'keys[]' <<<"$params_json")
 }
 
 load_config() {
@@ -39,6 +85,11 @@ load_config() {
     OUTPUT_FILE=$(jq -r '.output_file // "enumeration_results.json"' "$CONFIG_PATH")
     SAVE_RESULTS=$(jq -r '.save_results // false' "$CONFIG_PATH")
 
+    if [[ ! -d "$TESTS_DIR" ]]; then
+        echo "Tests directory not found: $TESTS_DIR" >&2
+        return 1
+    fi
+
     echo "Configuration loaded from $CONFIG_PATH"
     return 0
 }
@@ -53,33 +104,30 @@ discover_tests() {
     fi
 
     local loaded=0
-    for i in $(seq 0 $((count - 1))); do
-        local enabled name file path
+    local i path file enabled name
+
+    for ((i = 0; i < count; i++)); do
         enabled=$(jq -r ".tests[$i].enabled // false" "$CONFIG_PATH")
         name=$(jq -r ".tests[$i].name" "$CONFIG_PATH")
         file=$(jq -r ".tests[$i].file" "$CONFIG_PATH")
+        path=$(resolve_test_path "$file")
 
         if [[ "$enabled" != "true" ]]; then
             echo "Skipping disabled test: $name"
             continue
         fi
 
-        # Convert .py filename to .sh
-        local sh_file="${file%.py}.sh"
-        path="$TESTS_DIR/$sh_file"
-
         if [[ ! -f "$path" ]]; then
             echo "Test file not found: $path"
             continue
         fi
 
-        if ! grep -q '^run()' "$path" 2>/dev/null; then
-            echo "Test script $sh_file missing 'run()' function"
-            continue
+        if [[ ! -x "$path" ]]; then
+            chmod +x "$path" 2>/dev/null || true
         fi
 
-        echo "Loaded test: $name"
-        (( loaded++ )) || true
+        echo "Loaded test: $name ($path)"
+        ((loaded++)) || true
     done
 
     [[ "$loaded" -gt 0 ]]
@@ -87,14 +135,13 @@ discover_tests() {
 
 run_test() {
     local index="$1"
-    local name file sh_file path params_json timestamp
+    local name file path params_json timestamp output exit_code
 
     name=$(jq -r ".tests[$index].name" "$CONFIG_PATH")
     file=$(jq -r ".tests[$index].file" "$CONFIG_PATH")
-    sh_file="${file%.py}.sh"
-    path="$TESTS_DIR/$sh_file"
+    path=$(resolve_test_path "$file")
     params_json=$(jq -c ".tests[$index].parameters // {}" "$CONFIG_PATH")
-    timestamp=$(date -Iseconds)
+    timestamp=$(date -Iseconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S%z')
 
     printf '\n%s\n' "$(printf '=%.0s' {1..60})"
     echo "Running: $name"
@@ -108,44 +155,44 @@ run_test() {
         return
     fi
 
-    # Source the test script and call run() with params JSON via env var
-    local output
-    if output=$(TEST_PARAMS="$params_json" bash -c "source '$path'; run" 2>&1); then
-        echo "$output"
+    set +e
+    output=$(
+        export_test_params "$params_json"
+        bash "$path"
+    2>&1)
+    exit_code=$?
+    set -e
+
+    echo "$output"
+
+    if [[ "$exit_code" -eq 0 ]]; then
         RESULTS_STATUS["$name"]="success"
-        RESULTS_OUTPUT["$name"]="$output"
     else
-        echo "Error executing test $name"
-        echo "$output"
         RESULTS_STATUS["$name"]="error"
-        RESULTS_OUTPUT["$name"]="$output"
     fi
+    RESULTS_OUTPUT["$name"]="$output"
     RESULTS_TIMESTAMP["$name"]="$timestamp"
 }
 
 run_all_tests() {
-    local count
+    local count loaded=0
     count=$(jq '.tests | length' "$CONFIG_PATH")
-    local loaded=0
 
-    for i in $(seq 0 $((count - 1))); do
-        local enabled name file sh_file path
+    local i enabled path file name
+    for ((i = 0; i < count; i++)); do
         enabled=$(jq -r ".tests[$i].enabled // false" "$CONFIG_PATH")
-        name=$(jq -r ".tests[$i].name" "$CONFIG_PATH")
-        file=$(jq -r ".tests[$i].file" "$CONFIG_PATH")
-        sh_file="${file%.py}.sh"
-        path="$TESTS_DIR/$sh_file"
+        [[ "$enabled" != "true" ]] && continue
 
-        if [[ "$enabled" != "true" ]]; then continue; fi
-        if [[ ! -f "$path" ]]; then continue; fi
-        if ! grep -q '^run()' "$path" 2>/dev/null; then continue; fi
+        file=$(jq -r ".tests[$i].file" "$CONFIG_PATH")
+        path=$(resolve_test_path "$file")
+        [[ ! -f "$path" ]] && continue
 
         run_test "$i"
-        (( loaded++ )) || true
+        ((loaded++)) || true
     done
 
     echo ""
-    echo "Starting enumeration with $loaded test(s)"
+    echo "Finished running $loaded test(s)"
     print_summary
 }
 
@@ -154,13 +201,14 @@ print_summary() {
     echo "ENUMERATION SUMMARY"
     printf '%s\n' "$(printf '=%.0s' {1..60})"
 
-    local total=0 successful=0 failed=0
+    local total=0 successful=0 failed=0 name
+
     for name in "${!RESULTS_STATUS[@]}"; do
-        (( total++ )) || true
+        ((total++)) || true
         if [[ "${RESULTS_STATUS[$name]}" == "success" ]]; then
-            (( successful++ )) || true
+            ((successful++)) || true
         else
-            (( failed++ )) || true
+            ((failed++)) || true
         fi
     done
 
@@ -175,11 +223,10 @@ print_summary() {
 
 save_results() {
     local json="{"
-    local first=true
+    local first=true name escaped_output
 
     for name in "${!RESULTS_STATUS[@]}"; do
         [[ "$first" == "true" ]] && first=false || json+=","
-        local escaped_output
         escaped_output=$(printf '%s' "${RESULTS_OUTPUT[$name]}" | jq -Rs .)
         json+=$(printf '"%s":{"status":"%s","output":%s,"timestamp":"%s"}' \
             "$name" \
@@ -189,13 +236,11 @@ save_results() {
     done
 
     json+="}"
-
     echo "$json" | jq . > "$OUTPUT_FILE"
     echo ""
     echo "Results saved to: $OUTPUT_FILE"
 }
 
-# ── Entry point ───────────────────────────────────────────────────────────────
 main() {
     echo "Start"
     require_jq
@@ -213,4 +258,4 @@ main() {
     echo "Enumeration complete!"
 }
 
-main
+main "$@"
